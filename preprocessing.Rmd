@@ -1,7 +1,7 @@
 ---
 title: "preprocessing"
 author: "Jin Lin"
-date: "2023-06-29"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: html_document
 ---
 
@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Load R Packages
 
-```{r packages,eval=FALSE}
+```{r packages,eval=FALSE, message=FALSE}
 library(tidyverse)
 library(flowCore)
 library(flowClust)
@@ -38,7 +38,7 @@ markernames(z_fs[[1]])
 
 We select FSC, which represents the cell size and the fluorescence with a wavelength of 460 nm to generate the raw scatter plot.
 
-```{r}
+```{r, message=FALSE}
 ggplot(z_fs[[1]],aes(x=`PMT.1`,y=`PMT.9`))+
   geom_hex(bins=100)+
   theme_bw()+
@@ -53,16 +53,16 @@ Clearly, the particles are concentrated in the left bottom area, it indicates th
 In this section, we take one flowFrame, the Inner_Zone_DAPI, of whole flowSet as an example to illustrate the effect of compensation and transformation.
 
 ```{r,eval=FALSE}
-### Compensation
+# Compensation
 y_comp <- compensate(z_fs[[1]],spillover(z_fs[[1]])$SPILL)
 
-### Cleaning
+# Cleaning
 library(flowAI)
 y_comp_clean <- flow_auto_qc(y_comp)
 ```
 
 ```{r}
-### Transformation using log-transformation
+# Transformation using log-transformation
 trans <- estimateLogicle(y_comp_clean,colnames(y_comp_clean[,c(11,27)]))
 y_comp_clean_trans <- transform(y_comp_clean,trans)
 
@@ -74,14 +74,19 @@ ggplot(y_comp_clean_trans,aes(x=`PMT.1`,y=`PMT.9`))+
 ```
 
 ```{r}
-### Using arcsinh
-scaleTrans <- truncateTransform(a=5)
-trans_y <- transform(y_comp_clean,transformList("PMT.1",scaleTrans))
+# Clustering by robust model-based method
+y_gate <- flowClust(y_comp_clean_trans,varNames=c("PMT.1","PMT.2"), K=1,B=100)
 
+y_comp_clean_trans2 <- y_comp_clean_trans[y_comp_clean_trans %in% y_gate,]
+y_gate2 <- flowClust(y_comp_clean_trans2, varNames = c("PMT.1","PMT.9"),
+                     K=1:6,B=100)
 
-ggplot(trans_y,aes(x=`PMT.1`,y=`PMT.9`))+
-  geom_hex(bins=100)+
-  theme_bw()+
-  labs(x="FSC",y="Fluo.",title = "FSC vs Fluo. after transformation",subtitle = "Inner_zone_DAPI")
+criterion(y_gate2,"BIC")
+summary(y_gate2[[3]]) #K=3
 
+# Set outlier standard: 95% quantile
+ruleOutliers(y_gate2[[3]]) <- list(level=0.95)
+summary(y_gate2[[3]])
+
+plot(y_gate2[[3]],data=y_comp_clean_trans2,level=0.8)
 ```
