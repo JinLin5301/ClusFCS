@@ -1,0 +1,87 @@
+---
+title: "preprocessing"
+author: "Jin Lin"
+date: "2023-06-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load R Packages
+
+```{r packages,eval=FALSE}
+library(tidyverse)
+library(flowCore)
+library(flowClust)
+library(ggcyto)
+library(gridExtra)
+library(knitr)
+```
+
+## Import Data
+
+```{r pressure, eval=FALSE}
+fcs.direction <- "~/FCS/Z-Project Bacillus_pretest/fcs"
+z_fs <- read.flowSet(path = fcs.direction,alter.names = T)
+z_gate <- read.FCS("~/FCS/Z-Project Bacillus_pretest/Gating.fcs",alter.names = T)
+```
+
+Now, let's have a look of variables, and their corresponding notations.
+
+```{r}
+markernames(z_fs[[1]])
+```
+
+### Basic Visualization
+
+We select FSC, which represents the cell size and the fluorescence with a wavelength of 460 nm to generate the raw scatter plot.
+
+```{r}
+ggplot(z_fs[[1]],aes(x=`PMT.1`,y=`PMT.9`))+
+  geom_hex(bins=100)+
+  theme_bw()+
+  labs(x="FSC",y="Fluorescence",title = "FSC vs Fluoresence",subtitle = "Inner_zone_DAPI")+
+  xlim(0,2500)+ylim(0,2500)+coord_fixed()
+```
+
+Clearly, the particles are concentrated in the left bottom area, it indicates that before any further downstream analysis, a proper transformation of the data is necessary.
+
+## Compensation + Transformation
+
+In this section, we take one flowFrame, the Inner_Zone_DAPI, of whole flowSet as an example to illustrate the effect of compensation and transformation.
+
+```{r,eval=FALSE}
+### Compensation
+y_comp <- compensate(z_fs[[1]],spillover(z_fs[[1]])$SPILL)
+
+### Cleaning
+library(flowAI)
+y_comp_clean <- flow_auto_qc(y_comp)
+```
+
+```{r}
+### Transformation using log-transformation
+trans <- estimateLogicle(y_comp_clean,colnames(y_comp_clean[,c(11,27)]))
+y_comp_clean_trans <- transform(y_comp_clean,trans)
+
+ggplot(y_comp_clean_trans,aes(x=`PMT.1`,y=`PMT.9`))+
+  geom_hex(bins=100)+
+  theme_bw()+
+  labs(x="FSC",y="Fluo.",title = "FSC vs Fluo. after log-transformation",subtitle = "Inner_zone_DAPI")
+
+```
+
+```{r}
+### Using arcsinh
+scaleTrans <- truncateTransform(a=5)
+trans_y <- transform(y_comp_clean,transformList("PMT.1",scaleTrans))
+
+
+ggplot(trans_y,aes(x=`PMT.1`,y=`PMT.9`))+
+  geom_hex(bins=100)+
+  theme_bw()+
+  labs(x="FSC",y="Fluo.",title = "FSC vs Fluo. after transformation",subtitle = "Inner_zone_DAPI")
+
+```
