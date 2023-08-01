@@ -1,0 +1,95 @@
+---
+title: "01-Preprocessing"
+date: "Compiled at `r format(Sys.time(), '%Y-%m-%d %H:%M:%S', tz = 'UTC')` UTC"
+output: github_document
+params:
+  name: "01-Preprocessing" # change if you rename file
+---
+
+```{r here, message=FALSE}
+here::i_am(paste0(params$name, ".Rmd"), uuid = "664c6b80-49a5-449b-ae40-2ff6c9851b54")
+```
+
+The purpose of this document is ...
+
+```{r packages}
+library(tidyverse)
+library(flowCore)
+library(flowClust)
+library(ggcyto)
+library(gridExtra)
+library(knitr)
+library(ggplot2)
+library(flowAI)
+```
+
+```{r directories}
+# create or *empty* the target directory, used to write this file's data: 
+projthis::proj_create_dir_target(params$name, clean = TRUE)
+
+# function to get path to target directory: path_target("sample.csv")
+path_target <- projthis::proj_path_target(params$name)
+
+# function to get path to previous data: path_source("00-import", "sample.csv")
+path_source <- projthis::proj_path_source(params$name)
+
+```
+
+## Import Data
+
+```{r import, eval=FALSE}
+fcs.direction <- "~/FCS/Z-Project Bacillus_pretest/fcs"
+z_fs <- read.flowSet(path = fcs.direction,alter.names = T,transformation = F)
+z_gate <- read.FCS("~/FCS/Z-Project Bacillus_pretest/Gating.fcs",alter.names = T,transformation=F)
+markernames(z_fs[[1]])
+```
+
+### Basic Visualization
+
+We select FSC, which represents the cell size and the fluorescence with a wavelength of 460 nm to generate the raw scatter plot.
+
+```{r visualization, message=FALSE}
+library(ggplot2)
+ggplot(z_fs[[1]],aes(x=`PMT.1`,y=`PMT.9`))+
+  geom_hex(bins=100)+
+  theme_bw()+
+  labs(x="FSC",y="Fluorescence",title = "FSC vs Fluoresence",subtitle = "Inner_zone_DAPI")+
+  xlim(0,2500)+ylim(0,2500)+coord_fixed()
+```
+
+## Compensation + Transformation
+
+In this section, we take one flowFrame, the Inner_Zone_DAPI, of whole flowSet as an example to illustrate the effect of compensation and transformation.
+
+```{r comp,eval=FALSE}
+# Compensation
+y_comp <- compensate(z_fs[[1]],spillover(z_fs[[1]])$SPILL)
+
+```
+
+```{r trans}
+# Transformation using log-transformation
+trans <- estimateLogicle(y_comp,colnames(y_comp[,15:42]))
+y_comp_trans <- transform(y_comp,trans)
+
+ggplot(y_comp_trans,aes(x=`PMT.1`,y=`PMT.9`))+
+  geom_hex(bins=100)+
+  theme_bw()+
+  labs(x="FSC",y="Fluo.",title = "FSC vs Fluo. after log-transformation",subtitle = "Inner_zone_DAPI")
+
+```
+
+## Quality Assessment
+
+```{r quality-check}
+library(flowAI)
+y_comp_clean <- flow_auto_qc(y_comp)
+```
+
+## Files written
+
+These files have been written to the target directory, `r paste0("data/", params$name)`:
+
+```{r list-files-target}
+projthis::proj_dir_info(path_target())
+```
