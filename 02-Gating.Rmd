@@ -1,0 +1,134 @@
+---
+title: "02-Gating"
+date: "Compiled at `r format(Sys.time(), '%Y-%m-%d %H:%M:%S', tz = 'UTC')` UTC"
+output: github_document
+params:
+  name: "02-Gating" # change if you rename file
+---
+
+```{r here, message=FALSE}
+here::i_am(paste0(params$name, ".Rmd"), uuid = "3dc33fb3-330d-46b4-b31d-8d7355d8d04e")
+```
+
+The purpose of this document is ...
+
+```{r packages,message=F}
+library(flowEMMi)
+library(tidyverse)
+library(flowCore)
+library(flowClust)
+library(ggcyto)
+library(gridExtra)
+library(knitr)
+library(ggplot2)
+library(gridGraphics)
+```
+
+```{r directories}
+# create or *empty* the target directory, used to write this file's data: 
+projthis::proj_create_dir_target(params$name, clean = TRUE)
+
+# function to get path to target directory: path_target("sample.csv")
+path_target <- projthis::proj_path_target(params$name)
+
+# function to get path to previous data: path_source("00-import", "sample.csv")
+path_source <- projthis::proj_path_source(params$name)
+```
+
+# Cell Population Identification
+
+The process to identify the specific cell subsets is known as gating.The gating methods can be divided in two main categories: sequential (Manual) Gating and Automated Gating. Automated gating is performed in two ways: unsupervised and supervised. In below we'll focus on two unsupervised approaches, flowmix and flowEMMI v2
+
+## flowEMMI v2
+```{r flowEMMI}
+fcs.direction <- "~/FCS/Z-Project Bacillus_pretest/fcs"
+z_fs <- read.flowSet(path = fcs.direction,alter.names = T,transformation = F)
+
+location <- c("Inner_zone","Middle_zone","Outer_zone","Surrounding","Whole_colony")
+plot_list <- list()
+
+for (i in 1:5){
+  data_name <- paste0(location[i],"_filter_DAPI.fcs")
+  data <- z_fs[[data_name]]
+  pic <- plotDensityAndEllipses(fcsData = data, ch1="PMT.1", ch2="PMT.9",
+                            logScale = F, title = data_name,
+                            axis_size=10, axisLabeling_size=10,
+                            xlab = "Forward Scatter", ylab = "DAPI Fluorescence", 
+                            font = "Arial")
+  plot_list[[i]] <- pic$plot
+}
+
+grid.arrange(grobs = plot_list, ncol = 3)
+
+```
+```{r EM-algorithm,message=F}
+set.seed(1)
+gating_list <- list()
+gating_plot_list <- list()
+
+for (i in 1:5){
+  data_name <- paste0(location[i],"_filter_DAPI.fcs")
+  data <- z_fs[[data_name]]
+  fdo <- mkFlowDataObject(data, xChannel="PMT.1", yChannel="PMT.9")
+  gating_fcsData <- flowEMMi( fdo=fdo
+                             , xMin=1500, xMax=50000, yMin=1500, yMax=50000
+                             , initFraction=0.01
+                             , finalFraction=1.0
+                             , minClusters=5, maxClusters=15, clusterbracket=2
+                             , numberOfInits=5
+                             , verbose=TRUE
+                             , parallel=FALSE
+                             , convergenceEpsilon=0.01
+                             , whenToRemoveOverlaps = 20
+                             , mergeWhenCenter = FALSE
+                             , mergeWhenTwoCenters = FALSE
+                             , thresholdForDeletion = 0.2
+                             , threshold = 0.9
+                             , considerWeights=TRUE
+                             , plot = FALSE
+                             , alpha=0.9
+                             , minMinor=500)
+  gating_list[[i]] <- gating_fcsData$best
+}
+
+for (i in 1:5){
+  data_name <- paste0(location[i],"_filter_DAPI.fcs")
+  data <- z_fs[[data_name]]
+  gating_pic <- plotDensityAndEllipses(fcsData = data, ch1="PMT.1", ch2="PMT.9",
+                                       alpha=0.9,logScale = T, 
+                                       results = gating_list[[i]],
+                                       title = data_name,
+                            ellipseDotSize = 0.5, axis_size=10, axisLabeling_size=10,
+                            xlab = "Forward Scatter", ylab = "DAPI Fluorescence", 
+                            font = "Arial")
+  gating_plot_list[[i]] <- gating_pic$plot
+}
+
+```
+
+## Clustering by robust model-based method
+```{r flowClust}
+library(flowClust)
+
+for (i in 1:5){
+  data_name <- paste0(location[i],"_DAPI.fcs")
+  data <- z_fs[[data_name]]
+  data_gate <- flowClust(data,varNames = c("PMT.1","PMT.2"), K=1,B=100)
+  data_new <- data[data %in% data_gate,]
+  data_gate_new <- flowClust(data_new,varNames = c("PMT.1","PMT.9"), 
+                             K=1:5,B=100)
+  criterion(data_gate_new,"BIC")
+  ruleOutliers(data_gate_new[[5]]) <- list(level=0.95)
+  plot(data_gate_new,data=data_new,level=0.8)
+}
+```
+
+
+
+## Files written
+
+These files have been written to the target directory, `r paste0("data/", params$name)`:
+
+```{r list-files-target}
+projthis::proj_dir_info(path_target())
+```
