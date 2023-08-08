@@ -1,0 +1,233 @@
+---
+title: "02b-flowmix on microbial community data"
+date: "Compiled at `r format(Sys.time(), '%Y-%m-%d %H:%M:%S', tz = 'UTC')` UTC"
+output: github_document
+params:
+  name: "02b-flowmix on microbial community data" # change if you rename file
+---
+
+```{r here, message=FALSE}
+here::i_am(paste0(params$name, ".Rmd"), uuid = "989c1b7b-94e7-44a3-ba84-4dfb55c493e8")
+```
+
+The purpose of this document is ...
+
+```{r packages,message=F}
+library("conflicted")
+library(readxl)
+library(purrr)
+library(dplyr)
+library(flowmix)
+library(flowCore)
+library(flowWorkspace)
+library(ggcyto)
+library(tidyverse)
+library(RColorBrewer)
+library(flowEMMi)
+```
+
+```{r directories}
+# create or *empty* the target directory, used to write this file's data: 
+projthis::proj_create_dir_target(params$name, clean = TRUE)
+
+# function to get path to target directory: path_target("sample.csv")
+path_target <- projthis::proj_path_target(params$name)
+
+# function to get path to previous data: path_source("00-import", "sample.csv")
+path_source <- projthis::proj_path_source(params$name)
+```
+
+## Task1
+
+In this part, we're focusing on microbial communities from paper: Neutral mechanisms and niche differentiation in steady-state insular microbial communities reveald by single cell analysis by Liu et al., 2019
+
+This flow cytometry data consists of 5 reactors data.
+
+C1 and C2 are two control reactors in order to test for neutral behaviour under undisturbed communities.
+
+D1, D2 and D3 were disturbed by a repeated and soft temperature stressor from 30 to 40 degrees.
+
+Liu et. al sampled from all five reactors and analyzed them by flow cytometry. All raw data can be accessed by flowRepository (<https://flowrepository.org/>) under accession number: FR-FCM-ZYWX.
+
+### Import data
+
+```{r import-data, message=F}
+path_Liu <- "~/Desktop/FlowRepository_Liu/"
+file_name_Liu <- list.files(path_Liu,pattern = "\\.fcs$",full.names = T)
+C1_data <- list()
+
+for (i in file_name_Liu){
+  data <- read.FCS(i,alter.names = T,transformation = F)
+  new_name <- substr(i,start = 43,stop=57)
+  C1_data[[new_name]] <- data
+}
+
+```
+
+```{r,echo=F}
+lengthc1 <- length(C1_data)
+print(paste("The whole experiment has",lengthc1,"time points"))
+```
+
+```{r}
+test1 <-C1_data[[1]]
+ggcyto(test1, aes(x = "PMT.1", y = "PMT.9")) + geom_hex(bins = 128)
+```
+
+Below is another visulization method supported by flowEMMI v2 package
+```{r,echo=T,eval=F}
+plotDensityAndEllipses(fcsData = test1, ch1="PMT.1", ch2="PMT.9",logScale = F,
+                       axis_size=10, axisLabeling_size=10,
+                       xlab = "Forward Scatter", ylab = "DAPI", font = "Arial")
+```
+
+### flowEMMI v2
+Since each time point contains around 200k cells, every run takes about 30mins, here is an example of one time point.
+```{r test}
+fdo_test1 <- mkFlowDataObject(test1, xChannel="PMT.1", yChannel="PMT.9")
+
+set.seed(1)
+gating_test1 <- flowEMMi( fdo=fdo_test1
+                       , xMin=1, xMax=60000, yMin=1, yMax=60000
+                       , initFraction=0.01
+                       , finalFraction=1.0
+                       , minClusters=5, maxClusters=15, clusterbracket=2
+                       , numberOfInits=5
+                       , verbose=TRUE
+                       , parallel=FALSE
+                       , convergenceEpsilon=0.01
+                       , whenToRemoveOverlaps = 20
+                       , mergeWhenCenter = FALSE
+                       , mergeWhenTwoCenters = FALSE
+                       , thresholdForDeletion = 0.2
+                       , threshold = 0.9
+                       , considerWeights=TRUE
+                       , plot = FALSE
+                       , alpha=0.9
+                       , minMinor=500
+)
+
+pic <- plotDensityAndEllipses(fcsData = test1, ch1="PMT.1", ch2="PMT.9", alpha=0.9,
+                                 logScale = F, results = gating_test1$best,
+                                 ellipseDotSize = 0.5, axis_size=10, axisLabeling_size=10,
+                                 xlab = "Forward Scatter", ylab = "DAPI", font = "Arial")
+
+```
+
+### flowmix
+First, all fcs datas need to be converted to the flowmix required format for downstream analysis.
+
+FSC and DAPI fluorescence would be the features for the cytograms, and environmental variables come from the abiotic sheet.
+```{r convert}
+# cytograms
+C1_ylist <- list()
+
+for (i in seq_along(C1_data)){
+  C1_ylist[[i]] <- C1_data[[i]]@exprs[,c(11,13,27)] # PMT.1/2 for FSC/SSC, PMT.9 for fluorescence
+}
+
+# environment variables
+abio_data <- read_excel("~/Desktop/osfstorage/Data sheet for abiotic parameters.xlsx")
+C1_X <- abio_data[abio_data$Reactor=="C1",4:11]
+C1_X[is.na(C1_X)] <- 0
+C1_X <- as.matrix(C1_X)
+```
+
+Notation: since in the original data, each time point contains over 200k cells, here I select 10k for each as subset for illustration. The results for whole dataset comes later.
+
+```{r binning}
+# binning data
+set.seed(0)
+ysub <- list()
+
+for (i in 1:65) {
+  rrow <- sample(1:200000,size=2000,replace = F)
+  ysub[[i]] <- C1_ylist[[i]][rrow,]
+  ysub[[i]][,] <- as.double(ysub[[i]][,])
+}
+
+grid <- make_grid(ysub,gridsize = 30)
+obj <- bin_many_cytograms(ysub,grid,mc.cores = 4,verbose = F)
+sub_ylist <- obj$ybin_list
+sub_countslist <- obj$counts_list
+```
+
+### on-going
+Havn't got the results for flowmix, but all required data have been prepared
+```{r flowmix,eval=F}
+# flowmix for 2d
+set.seed(0)
+sub_rest <- flowmix(sub_ylist,C1_X,
+                   countslist=sub_countslist,numclust=5,
+                   mean_lambda=0.001,prob_lambda=0.001,
+                   verbose=F,maxdev=0.5)
+
+```
+
+## Task2
+
+```{r import,message=F}
+folder_path <- "~/Desktop/FlowRepo/"
+file_name <- list.files(folder_path,pattern = "\\.fcs$",full.names = T)
+MoFloA_Feb_data <- list()
+MoFloA_Mar_data <- list()
+MoFloA_Nov_data <- list()
+MoFloA_Dec_data <- list()
+
+# Group files by the month
+
+for (file_name in file_name){
+  month <- substr(file_name,start = 46,stop = 48) # use nchar to locate
+  new_name <- substr(file_name,start = 43, stop = 58)
+  data <- read.FCS(file_name,alter.names = T,transformation=F)
+  if (month=="Feb") { MoFloA_Feb_data[[new_name]] <- data}
+  else if (month=="Mar") {MoFloA_Mar_data[[new_name]] <- data}
+  else if (month=="Nov") {MoFloA_Nov_data[[new_name]] <- data}
+  else if (month=="Dec") {MoFloA_Dec_data[[new_name]] <- data}
+}
+
+```
+
+### flowEMMI v2
+
+```{r}
+test <- MoFloA_Nov_data[[1]]
+
+# FL4 is the signal channel
+fdo_test <- mkFlowDataObject(test, xChannel="FS.Log", yChannel="FL.4.Log")
+
+set.seed(1)
+gating_test <- flowEMMi( fdo=fdo_test
+                       , xMin=1, xMax=5000, yMin=1, yMax=5000
+                       , initFraction=0.01
+                       , finalFraction=1.0
+                       , minClusters=5, maxClusters=15, clusterbracket=2
+                       , numberOfInits=5
+                       , verbose=TRUE
+                       , parallel=FALSE
+                       , convergenceEpsilon=0.01
+                       , whenToRemoveOverlaps = 20
+                       , mergeWhenCenter = FALSE
+                       , mergeWhenTwoCenters = FALSE
+                       , thresholdForDeletion = 0.2
+                       , threshold = 0.9
+                       , considerWeights=TRUE
+                       , plot = FALSE
+                       , alpha=0.9
+                       , minMinor=500
+)
+
+plot_g <- plotDensityAndEllipses(fcsData = test, ch1="FS.Log", ch2="FL.4.Log", alpha=0.9,
+                                 logScale = T, results = gating_test$best,
+                                 ellipseDotSize = 0.5, axis_size=10, axisLabeling_size=10,
+                                 xlab = "Forward Scatter", ylab = "DAPI", font = "Arial")
+
+```
+
+## Files written
+
+These files have been written to the target directory, `r paste0("data/", params$name)`:
+
+```{r list-files-target}
+projthis::proj_dir_info(path_target())
+```
